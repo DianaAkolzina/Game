@@ -1,0 +1,290 @@
+import pygame
+from PIL import Image
+import time
+import random
+import numpy as np
+pygame.init()
+import math
+from PIL import ImageOps
+
+clock = pygame.time.Clock()
+
+person_speed = 10
+
+font_style = pygame.font.SysFont("comicsansms", 25)
+score_font = pygame.font.SysFont("comicsansms", 35)
+
+white = (255, 255, 255)
+yellow = (255, 255, 102)
+black = (0, 0, 0)
+red = (213, 50, 80)
+green = (0, 255, 0)
+blue = (50, 153, 250)
+
+dis_width = 900
+dis_height = 900
+
+dis = pygame.display.set_mode((dis_width, dis_height))
+pygame.display.set_caption('New game')
+
+def message(msg, color):
+    mesg = font_style.render(msg, True, color)
+    dis.blit(mesg, [dis_width / 6, dis_height / 3])
+
+
+def Your_score(score):
+    value = score_font.render("Your Score: " + str(score), True, pink)
+    dis.blit(value, [0, 0])
+
+class Prise:
+    def __init__(self, pic_path, labyrinth, total_score):
+        self.image = pygame.image.load(pic_path).convert()
+        self.image = pygame.transform.scale(self.image, (30, 30))
+        self.image.set_colorkey(white)
+        self.labyrinth = labyrinth
+        self.total_score = total_score
+        self.set_new_position()
+
+    def draw(self, surface):
+        surface.blit(self.image, (self.x, self.y))
+
+    def is_picked(self, person_rect):
+        prize_rect = pygame.Rect(self.x, self.y, self.image.get_width(), self.image.get_height())
+        if person_rect.colliderect(prize_rect):
+            self.total_score += 1
+            return True
+
+        return False
+
+    def set_new_position(self, ref_x=None, ref_y=None, min_distance=None):
+        self.x, self.y = self.labyrinth.find_free_space(self.image.get_width(), self.image.get_height(), ref_x, ref_y,
+                                                        min_distance)
+
+
+def parse_labyrinth_string(labyrinth_string, wall_length, wall_thickness):
+    walls = []
+    x, y = 0, 0
+
+    for ch in labyrinth_string:
+        if ch == '-':
+            walls.append(pygame.Rect(x, y, wall_length, wall_thickness))
+            x += wall_length
+        elif ch == '|':
+            walls.append(pygame.Rect(x, y, wall_thickness, wall_length))
+            x += wall_thickness
+        elif ch == ' ':
+            x += wall_length
+        elif ch == '\n':
+            x = 0
+            y += wall_length
+
+    return walls
+
+class Labyrinth:
+    def __init__(self, image_path, size):
+        self.image = Image.open(image_path).convert('RGB')
+        self.image = self.image.resize((size, size), Image.LANCZOS)
+
+        # Invert colors
+        self.image = ImageOps.invert(self.image)
+
+        self.tensor = np.asarray(self.image)
+
+
+
+
+    def draw(self, surface):
+        resized_image = pygame.image.frombuffer(self.image.tobytes(), self.image.size, self.image.mode)
+        surface.blit(resized_image, (0, 0))
+
+    def collision(self, person_rect):
+        person_pixels = self.tensor[person_rect.top:person_rect.bottom, person_rect.left:person_rect.right]
+        return np.any(person_pixels > 128)
+
+    def find_free_space(self, width, height, ref_x=None, ref_y=None, min_distance=None):
+        found = False
+        while not found:
+            y_indices, x_indices = np.where(self.tensor[..., 0] < 128)
+            free_space_index = np.random.randint(len(x_indices))
+            x, y = x_indices[free_space_index], y_indices[free_space_index]
+
+            if x + width < self.tensor.shape[1] and y + height < self.tensor.shape[0]:
+                # Check if all pixels in the covered area are black
+                covered_area = self.tensor[y:y + height, x:x + width]
+                if np.all(covered_area[..., 0] < 128) and np.all(covered_area[..., 1] < 128) and np.all(
+                        covered_area[..., 2] < 128):
+                    if min_distance and ref_x is not None and ref_y is not None:
+                        distance = math.sqrt((x - ref_x) ** 2 + (y - ref_y) ** 2)
+                        if distance >= min_distance:
+                            found = True
+                    else:
+                        found = True
+
+        return x, y
+
+class Person:
+    def __init__(self, x, y, speed, spritesheet_path):
+        self.x = x
+        self.y = y
+        self.speed = speed
+
+        self.spritesheet = pygame.image.load(spritesheet_path).convert_alpha()
+        self.spritesheet.set_colorkey((0, 0, 0))
+
+        self.frame_index = 0
+        self.direction = 0  # 0: down, 1: left, 2: right, 3: up
+        self.set_image()
+        self.trace = []
+
+    def set_image(self):
+        x = self.frame_index * 64
+        y = self.direction * 64
+        self.current_image = self.spritesheet.subsurface(pygame.Rect(x, y, 64, 64))
+        self.current_image = pygame.transform.scale(self.current_image, (64, 64))
+        self.current_image = pygame.transform.scale(self.current_image, (32, 32))
+
+        BLACK = (0, 0, 0)
+        for x in range(self.current_image.get_width()):
+            for y in range(self.current_image.get_height()):
+                if self.current_image.get_at((x, y))[:3] == BLACK:
+                    self.current_image.set_at((x, y), (0, 0, 0, 0))
+
+    def draw(self, surface):
+        for position in self.trace:
+            pygame.draw.rect(surface, (255, 20, 147), pygame.Rect(position[0], position[1], 10, 10))
+        surface.blit(self.current_image, (self.x, self.y))
+
+    def move(self, keys):
+        if keys[pygame.K_UP]:
+            self.y -= self.speed
+            self.direction = 3
+        elif keys[pygame.K_DOWN]:
+            self.y += self.speed
+            self.direction = 0
+        elif keys[pygame.K_LEFT]:
+            self.x -= self.speed
+            self.direction = 1
+        elif keys[pygame.K_RIGHT]:
+            self.x += self.speed
+            self.direction = 2
+
+        self.frame_index = (self.frame_index + 1) % 4
+        self.set_image()
+
+
+
+def Your_score(score):
+    score_text = score_font.render("Your Score: " + str(score), True, red)
+    dis.blit(score_text, [0, 0])
+
+
+def display_original_labyrinth(image_path, surface):
+    original_image = pygame.image.load(image_path)
+    surface.blit(original_image, (0, 0))
+    pygame.display.update()
+    time.sleep(5)
+
+def gameLoop(current_labyrinth_index=0, total_score=0):
+
+    clock = pygame.time.Clock()
+    person_speed = 10
+
+    game_over = False
+    game_close = False
+
+    labyrinth_images = [ "14.jpg", "lab2.jpg", 'maze1.jpg', "lab2.jpg", "14.jpg", "cl3.png"]
+
+    labyrinth = Labyrinth(labyrinth_images[current_labyrinth_index], 900)
+    x1, y1 = labyrinth.find_free_space(32, 32)
+    person = Person(x1, y1, person_speed, "walk.png")
+    prize = Prise('heart.jpg', labyrinth, total_score)
+    prize.set_new_position(x1, y1, 200)
+    labyrinth = Labyrinth(labyrinth_images[current_labyrinth_index], dis_width)
+
+    while not game_over:
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                game_over = True
+
+        if game_close:
+            dis.fill(white)
+            message("Game closed", red)
+
+            pygame.display.update()
+
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_q:
+                        game_over = True
+                        game_close = False
+                    if event.key == pygame.K_c:
+                        gameLoop(current_labyrinth_index)
+                        display_score(prize.score)
+        else:
+            keys = pygame.key.get_pressed()
+            prev_x, prev_y = person.x, person.y
+            person.move(keys)
+            person_rect = pygame.Rect(person.x, person.y, person.current_image.get_width(),
+                                      person.current_image.get_height())
+            person.trace.append((prev_x, prev_y))
+
+            if person.x >= dis_width or person.x < 0 or person.y >= dis_height or person.y < 0 or labyrinth.collision(
+                    pygame.Rect(person.x, person.y, person.current_image.get_width(),
+                                person.current_image.get_height())):
+                # create a font object
+                font = pygame.font.Font(None, 36)
+
+                text = font.render("Ouch!", True, (255, 255, 255))
+                text_rect = text.get_rect()
+
+                # set the position of the text surface in the center of the screen
+                text_rect.center = (900 // 2, 900 // 2)
+
+                # set the start time of the text display
+                start_time = time.time()
+
+                # display the text for 3 seconds
+                while time.time() - start_time < 3:
+                    # clear the screen
+                    dis.fill((0, 0, 0))
+
+                    # draw the text surface
+                    dis.blit(text, text_rect)
+
+                    # update the display
+                    pygame.display.update()
+
+                gameLoop(current_labyrinth_index, total_score=prize.total_score)
+
+            elif prize.is_picked(person_rect):
+                prize.set_new_position()
+                Your_score(prize.total_score)
+                pygame.display.update()
+                current_labyrinth_index += 1
+                if current_labyrinth_index < len(labyrinth_images):
+                    Your_score(prize.total_score)
+                    pygame.display.update()
+                    gameLoop(current_labyrinth_index, prize.total_score)
+                else:
+                    message("Congratulations! You've completed all levels!", green)
+                    pygame.display.update()
+                    time.sleep(5)
+                    game_over = True
+
+            else:
+                dis.fill(white)
+
+                labyrinth.draw(dis)
+                person.draw(dis)
+                prize.draw(dis)
+                Your_score(prize.total_score)
+                pygame.display.update()
+
+                clock.tick(15)
+
+    pygame.quit()
+    return prize.total_score
+
+
+gameLoop()
